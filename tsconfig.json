@@ -1,12 +1,11 @@
 {
-  "compilerOptions": {
-    "target": "es2019",
-    "module": "commonjs",
-    "emitDeclarationOnly": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "moduleResolution": "node",
-    "forceConsistentCasingInFileNames": true
-  },
-  "include": ["src/**/*.ts", "types.d.ts"]
+    "compilerOptions": {
+        "target": "es2019",
+        "module": "commonjs",
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "moduleResolution": "node",
+        "forceConsistentCasingInFileNames": true
+    },
+    "include": ["src/**/*.ts", "types.d.ts"]
 }
