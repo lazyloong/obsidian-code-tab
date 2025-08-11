@@ -9,9 +9,13 @@
         "dev": "obsidian-plugin dev src/main.ts"
     },
     "devDependencies": {
-        "typescript": "^5.9.2",
+        "@types/sortablejs": "^1.15.8",
         "builtin-modules": "^3.3.0",
+        "obsidian": "obsidianmd/obsidian-api",
         "obsidian-plugin-cli": "^0.9.0",
-        "obsidian": "obsidianmd/obsidian-api"
+        "typescript": "^5.9.2"
+    },
+    "dependencies": {
+        "sortablejs": "^1.15.6"
     }
 }

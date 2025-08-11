@@ -1,34 +1,57 @@
-import { MarkdownPostProcessorContext, MarkdownView, Notice } from "obsidian";
+import { Component, MarkdownPostProcessorContext, MarkdownView, Notice } from "obsidian";
 import { TabBarItem } from "./tabBarItem";
 import { TabContent } from "./tabContent";
 import { TabData } from "./types";
+import Sortable from "sortablejs"; // 引入 Sortable
 
-// 每次修改内容会导致视图重新渲染，TabContainer会重新创建
-// 因此需要一个全局的Map来存储每个TabContainer的激活索引
-const activeIndexMap = new Map<string, number>();
-
-export class TabContainer {
+export class TabContainer extends Component {
     public tabs: TabData[] = [];
     public tabsElement: HTMLElement;
     public contentsElement: HTMLElement;
     public addButton: HTMLElement;
-    public draggedIndex: number | null = null;
-    public dropIndicator: HTMLElement;
+    private readonly id: string;
     private tabItems: TabBarItem[] = [];
     private contentItems: TabContent[] = [];
+    private sortable: Sortable; // Sortable 实例
+
+    // 每次修改内容会导致视图重新渲染，TabContainer会重新创建
+    // 因此需要一个全局的Map来存储每个TabContainer的激活索引
+    static activeIndexMap = new Map<string, { index: number; time: number }>();
 
     constructor(
-        public element: HTMLElement,
+        public containerEl: HTMLElement,
         public context: MarkdownPostProcessorContext,
-        private readonly id: string,
         source: string
     ) {
-        this.element = element;
+        super();
+        this.containerEl = containerEl;
         this.context = context;
+        this.id = `${context.sourcePath}-${this.findSourcePosition().lineStart}`;
         this.parseSource(source);
         this.createStructure();
         this.setupEventHandlers();
-        this.createDropIndicator();
+
+        this.registerInterval(
+            setInterval(() => {
+                // 每分钟更新激活索引，给索引保个活
+                TabContainer.getActiveIndex(this.id);
+            }, 1000 * 60)
+        );
+    }
+
+    static getActiveIndex(id: string): number {
+        const activeIndex = this.activeIndexMap.get(id);
+        if (!activeIndex) return 0;
+        activeIndex.time = Date.now();
+        return activeIndex.index;
+    }
+
+    static setActiveIndex(id: string, index: number) {
+        this.activeIndexMap.set(id, { index, time: Date.now() });
+    }
+
+    private isExist(): boolean {
+        return this.containerEl && this.containerEl.isConnected;
     }
 
     private parseSource(source: string) {
@@ -46,20 +69,19 @@ export class TabContainer {
     }
 
     public findSourcePosition() {
-        const sectionInfo = this.context.getSectionInfo(this.element);
-        const { lineStart, lineEnd } = sectionInfo;
+        const sectionInfo = this.context.getSectionInfo(this.containerEl);
+        if (!sectionInfo) return null;
+        const { lineStart, text } = sectionInfo;
+        const lines = text.split("\n");
+        const backtickCount = lines[lineStart].length - 3;
+        const lineEnd =
+            lineStart +
+            lines.slice(lineStart).findIndex((line) => line == "`".repeat(backtickCount));
         return { lineStart, lineEnd };
     }
 
-    private createDropIndicator() {
-        this.dropIndicator = document.createElement("div");
-        this.dropIndicator.className = "tab-drop-indicator";
-        this.dropIndicator.style.display = "none";
-        this.tabsElement?.appendChild(this.dropIndicator);
-    }
-
     private createStructure() {
-        this.element.className = "tab-container";
+        this.containerEl.className = "tab-container";
 
         this.tabsElement = document.createElement("div");
         this.tabsElement.className = "tabs";
@@ -73,8 +95,8 @@ export class TabContainer {
         this.addButton.style.opacity = "0";
         this.addButton.style.transition = "opacity 0.3s";
 
-        this.element.appendChild(this.tabsElement);
-        this.element.appendChild(this.contentsElement);
+        this.containerEl.appendChild(this.tabsElement);
+        this.containerEl.appendChild(this.contentsElement);
         this.tabsElement.appendChild(this.addButton);
 
         this.renderTabs();
@@ -82,11 +104,8 @@ export class TabContainer {
 
     public renderTabs() {
         // 清理现有组件
-        this.tabItems.forEach((item) => item.element.remove());
-        this.contentItems.forEach((item) => {
-            item.containerEl.remove();
-            item.unload();
-        });
+        this.tabItems.forEach((item) => this.removeChild(item));
+        this.contentItems.forEach((item) => this.removeChild(item));
         this.tabItems = [];
         this.contentItems = [];
 
@@ -95,26 +114,70 @@ export class TabContainer {
             const tabItem = new TabBarItem(this, tab, index);
             this.tabsElement.insertBefore(tabItem.element, this.addButton);
             this.tabItems.push(tabItem);
+            this.addChild(tabItem);
 
             // 创建内容区域
             const contentItem = new TabContent(tab.content);
 
-            // 设置内容保存回调（确保保存到源文件）
+            // 设置内容保存回调
             contentItem.onContentSave = (newContent) => {
-                if (this.tabs[index].content === newContent) return; // 如果内容没有变化则不更新{
+                if (this.tabs[index].content === newContent) return; // 如果内容没有变化则不更新
                 this.tabs[index].content = newContent;
                 this.updateMarkdownSource();
             };
 
-            this.contentsElement.appendChild(contentItem.containerEl);
+            this.contentsElement.appendChild(contentItem.element);
             this.contentItems.push(contentItem);
-
-            // 设置初始激活状态
-            if (index === (activeIndexMap.get(this.id) ?? 0)) {
-                tabItem.setActive(true);
-                contentItem.setActive(true);
-            }
+            this.addChild(contentItem);
         });
+
+        // 初始化或重新初始化 Sortable
+        this.initSortable();
+
+        // 设置初始激活状态
+        let activeIndex = TabContainer.getActiveIndex(this.id);
+        activeIndex = Math.min(activeIndex, this.tabs.length - 1);
+        activeIndex = Math.max(activeIndex, 0);
+        setTimeout(() => this.setActiveTab(activeIndex, "instant"), 0);
+    }
+
+    private initSortable() {
+        // 销毁现有的 Sortable 实例
+        this.sortable?.destroy();
+
+        // 初始化 Sortable
+        this.sortable = new Sortable(this.tabsElement, {
+            animation: 150,
+            delay: 75,
+            handle: ".tab-item", // 指定可拖拽的部分
+            filter: ".tab-add-button", // 排除添加按钮
+            ghostClass: "tab-ghost", // 拖拽时的幽灵元素类名
+            chosenClass: "tab-chosen", // 被选中的元素的类名
+            dragClass: "tab-drag", // 拖拽过程中的样式
+            onEnd: (evt) => this.handleSortableEnd(evt),
+        });
+    }
+
+    private handleSortableEnd(evt: Sortable.SortableEvent) {
+        if (evt.oldIndex === undefined || evt.newIndex === undefined) return;
+
+        // 调整 tabs 数组的顺序
+        const movedTab = this.tabs.splice(evt.oldIndex, 1)[0];
+        this.tabs.splice(evt.newIndex, 0, movedTab);
+
+        // 更新激活标签的索引
+        const activeIndex = TabContainer.getActiveIndex(this.id);
+        if (activeIndex === evt.oldIndex) {
+            TabContainer.setActiveIndex(this.id, evt.newIndex);
+        } else if (activeIndex > evt.oldIndex && activeIndex <= evt.newIndex) {
+            TabContainer.setActiveIndex(this.id, activeIndex - 1);
+        } else if (activeIndex < evt.oldIndex && activeIndex >= evt.newIndex) {
+            TabContainer.setActiveIndex(this.id, activeIndex + 1);
+        }
+
+        // 重新渲染标签（更新索引）
+        this.renderTabs();
+        this.updateMarkdownSource();
     }
 
     private setupEventHandlers() {
@@ -134,10 +197,10 @@ export class TabContainer {
         this.setActiveTab(clickedIndex);
     }
 
-    private setActiveTab(index: number) {
-        activeIndexMap.set(this.id, index);
+    private setActiveTab(index: number, behavior: ScrollBehavior = "smooth") {
+        TabContainer.setActiveIndex(this.id, index);
         this.tabItems.forEach((item, i) => {
-            item.setActive(i === index);
+            item.setActive(i === index, behavior);
         });
         this.contentItems.forEach((item, i) => {
             item.setActive(i === index);
@@ -157,14 +220,14 @@ export class TabContainer {
             this.updateMarkdownSource();
         };
 
-        input.onblur = finishEdit;
-        input.onkeydown = (e) => {
+        tabItem.registerDomEvent(input, "blur", () => finishEdit());
+        tabItem.registerDomEvent(input, "keydown", (e) => {
             if (e.key === "Enter") {
                 finishEdit();
             } else if (e.key === "Escape") {
                 tabItem.updateText(currentText);
             }
-        };
+        });
     }
 
     public handleDeleteTab(e: MouseEvent, tabIndex: number) {
@@ -175,142 +238,45 @@ export class TabContainer {
             return;
         }
 
-        // 记录当前激活状态
-        const wasActive = this.tabItems[tabIndex].isActive;
-
         // 删除数据
         this.tabs.splice(tabIndex, 1);
         this.renderTabs();
-
-        // 如果删除的是激活标签，激活新的标签
-        if (wasActive) {
-            const newActiveIndex = Math.min(tabIndex, this.tabs.length - 1);
-            this.handleTabClick(new MouseEvent("click"), newActiveIndex);
-        }
-
         this.updateMarkdownSource();
-    }
-
-    public handleDragStart(e: DragEvent, index: number) {
-        this.draggedIndex = index;
-        e.dataTransfer!.effectAllowed = "move";
-        this.tabItems[index].element.addClass("tab-item--dragging");
-    }
-
-    public handleDragOver(e: DragEvent, index: number) {
-        e.preventDefault();
-        e.dataTransfer!.dropEffect = "move";
-
-        if (this.draggedIndex === null) return;
-        if (this.wouldMove(this.draggedIndex, index)) {
-            this.showDropIndicator(index);
-        } else {
-            this.hideDropIndicator();
-        }
-    }
-
-    public handleDragEnter(e: DragEvent, index: number) {
-        e.preventDefault();
-        if (this.draggedIndex === null) return;
-        if (this.wouldMove(this.draggedIndex, index)) {
-            this.showDropIndicator(index);
-        } else {
-            this.hideDropIndicator();
-        }
-    }
-
-    public handleDragLeave(e: DragEvent) {
-        const relatedTarget = e.relatedTarget as HTMLElement;
-        if (!relatedTarget || !this.tabsElement.contains(relatedTarget)) {
-            this.hideDropIndicator();
-        }
-    }
-
-    public handleDragEnd(e: DragEvent) {
-        this.tabItems.forEach((item) => item.element.removeClass("tab-item--dragging"));
-        this.hideDropIndicator();
-        this.draggedIndex = null;
-    }
-
-    public handleDrop(e: DragEvent, dropIndex: number) {
-        e.preventDefault();
-
-        if (this.draggedIndex === null) return;
-        if (!this.wouldMove(this.draggedIndex, dropIndex)) {
-            this.hideDropIndicator();
-            return;
-        }
-
-        const draggedTab = this.tabs[this.draggedIndex];
-        this.tabs.splice(this.draggedIndex, 1);
-        this.tabs.splice(dropIndex, 0, draggedTab);
-
-        const activeTabIndex = this.tabItems.findIndex((item) => item.isActive);
-        if (activeTabIndex === this.draggedIndex) {
-            activeIndexMap.set(this.id, dropIndex);
-        } else if (activeTabIndex > this.draggedIndex && activeTabIndex <= dropIndex) {
-            activeIndexMap.set(this.id, activeTabIndex - 1);
-        } else if (activeTabIndex < this.draggedIndex && activeTabIndex >= dropIndex) {
-            activeIndexMap.set(this.id, activeTabIndex + 1);
-        }
-
-        this.renderTabs();
-        this.updateMarkdownSource();
-
-        this.hideDropIndicator();
-        this.draggedIndex = null;
-    }
-
-    private wouldMove(draggedIndex: number, targetIndex: number): boolean {
-        return draggedIndex !== targetIndex;
-    }
-
-    private showDropIndicator(targetIndex: number) {
-        if (!this.dropIndicator) return;
-        const tabItems = this.tabsElement.querySelectorAll(".tab-item");
-        const targetTab = tabItems[targetIndex] as HTMLElement;
-        if (!targetTab) return;
-
-        const tabRect = targetTab.getBoundingClientRect();
-        const tabsRect = this.tabsElement.getBoundingClientRect();
-
-        let indicatorLeft: number;
-        if (this.draggedIndex !== null && targetIndex > this.draggedIndex) {
-            indicatorLeft = tabRect.right - tabsRect.left;
-        } else {
-            indicatorLeft = tabRect.left - tabsRect.left;
-        }
-
-        this.dropIndicator.style.display = "block";
-        this.dropIndicator.style.left = `${indicatorLeft}px`;
-    }
-
-    private hideDropIndicator() {
-        if (this.dropIndicator) {
-            this.dropIndicator.style.display = "none";
-        }
     }
 
     public handleAddTab() {
         const newTab: TabData = {
             tabName: "新标签",
-            content: "\n",
+            content: "内容",
         };
 
         this.tabs.push(newTab);
+        TabContainer.setActiveIndex(this.id, this.tabs.length - 1);
         this.renderTabs();
         this.updateMarkdownSource();
-
-        setTimeout(() => {
-            const lastIndex = this.tabItems.length - 1;
-            if (lastIndex >= 0) {
-                this.tabItems[lastIndex].startEditing();
-            }
-        }, 100);
     }
 
     public updateMarkdownSource() {
+        if (!this.isExist()) return;
+
         let newSource = this.tabs.map((tab) => `tab:${tab.tabName}\n${tab.content}\n`).join("\n");
+
+        // 最长反引号长度
+        let maxBacktickCount = 0;
+        newSource.split("\n").forEach((line) => {
+            if (/^`+$/.test(line)) {
+                const backtickCount = line.length;
+                if (backtickCount > maxBacktickCount) {
+                    maxBacktickCount = backtickCount;
+                }
+            }
+        });
+        maxBacktickCount = Math.max(maxBacktickCount + 1, 3);
+
+        newSource = `${"`".repeat(maxBacktickCount)}tab\n${newSource}\n${"`".repeat(
+            maxBacktickCount
+        )}`;
+
         const view = app.workspace.getActiveViewOfType(MarkdownView);
         const { lineStart, lineEnd } = this.findSourcePosition();
         const mode = view.getMode();
@@ -318,8 +284,8 @@ export class TabContainer {
             const editor = view.editor;
             editor.replaceRange(
                 newSource,
-                { line: lineStart + 1, ch: 0 },
-                { line: lineEnd, ch: 0 }
+                { line: lineStart, ch: 0 },
+                { line: lineEnd, ch: editor.getLine(lineEnd).length }
             );
         } else {
             this.updateMarkdownSourceInPreview(newSource, lineStart, lineEnd);
@@ -335,8 +301,15 @@ export class TabContainer {
         const file = view.file;
         const fileContent = await app.vault.read(file);
         const lines = fileContent.split("\n");
-        lines.splice(lineStart + 1, lineEnd - lineStart - 1, ...newSource.split("\n"));
+        lines.splice(lineStart, lineEnd - lineStart + 1, ...newSource.split("\n"));
         const updatedContent = lines.join("\n");
         await app.vault.modify(file, updatedContent);
+    }
+
+    public onunload() {
+        try {
+            this.sortable?.destroy();
+        } catch (e) {}
+        this.containerEl = null;
     }
 }

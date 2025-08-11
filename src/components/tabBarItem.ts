@@ -1,8 +1,8 @@
-// tabBarItem.ts
+import { Component } from "obsidian";
 import { TabContainer } from "./tabContainer";
 import { TabData } from "./types";
 
-export class TabBarItem {
+export class TabBarItem extends Component {
     public element: HTMLElement;
     public isActive: boolean = false;
     private textElement: HTMLElement;
@@ -11,6 +11,7 @@ export class TabBarItem {
     private index: number;
 
     constructor(container: TabContainer, tabData: TabData, index: number) {
+        super();
         this.container = container;
         this.index = index;
 
@@ -34,24 +35,46 @@ export class TabBarItem {
     }
 
     private setupEventHandlers() {
-        this.element.onclick = (e) => this.container.handleTabClick(e, this.index);
-        this.element.ondblclick = (e) => this.container.handleTabDoubleClick(e, this.index);
-        this.deleteButton.onclick = (e) => this.container.handleDeleteTab(e, this.index);
-
-        this.element.ondragstart = (e) => this.container.handleDragStart(e, this.index);
-        this.element.ondragover = (e) => this.container.handleDragOver(e, this.index);
-        this.element.ondrop = (e) => this.container.handleDrop(e, this.index);
-        this.element.ondragenter = (e) => this.container.handleDragEnter(e, this.index);
-        this.element.ondragleave = (e) => this.container.handleDragLeave(e);
-        this.element.ondragend = (e) => this.container.handleDragEnd(e);
+        this.registerDomEvent(this.element, "click", (e) =>
+            this.container.handleTabClick(e, this.index)
+        );
+        this.registerDomEvent(this.textElement, "dblclick", (e) =>
+            this.container.handleTabDoubleClick(e, this.index)
+        );
+        this.registerDomEvent(this.deleteButton, "dblclick", (e) =>
+            this.container.handleDeleteTab(e, this.index)
+        );
     }
 
-    public setActive(isActive: boolean) {
+    public setActive(isActive: boolean, behavior: ScrollBehavior = "smooth") {
         this.isActive = isActive;
-        if (isActive) {
-            this.element.addClass("tab-item--active");
-        } else {
-            this.element.removeClass("tab-item--active");
+        if (this.element) this.element.classList.toggle("tab-item--active", isActive);
+        if (this.isActive) {
+            const containerEl = this.container.tabsElement;
+            if (!containerEl || !this.element) return;
+
+            // 获取标签项和容器的位置信息
+            const tabRect = this.element.getBoundingClientRect();
+            const containerRect = containerEl.getBoundingClientRect();
+
+            // 计算标签在容器中的可见性
+            const isFullyVisible =
+                tabRect.left >= containerRect.left && tabRect.right <= containerRect.right;
+
+            // 如果标签未完全可见，则滚动到中间位置
+            if (!isFullyVisible) {
+                // 计算目标滚动位置
+                const tabCenter = tabRect.left + tabRect.width / 2;
+                const containerCenter = containerRect.width / 2;
+                const targetScroll =
+                    containerEl.scrollLeft + (tabCenter - containerRect.left) - containerCenter;
+
+                // 应用平滑滚动
+                containerEl.scrollTo({
+                    left: targetScroll,
+                    behavior: behavior,
+                });
+            }
         }
     }
 
@@ -59,7 +82,7 @@ export class TabBarItem {
         this.textElement.textContent = text;
     }
 
-    public startEditing() {
+    public startEditing(): HTMLInputElement {
         const currentText = this.textElement.textContent || "";
         const input = document.createElement("input");
         input.type = "text";
@@ -72,5 +95,15 @@ export class TabBarItem {
         input.select();
 
         return input;
+    }
+
+    public onunload(): void {
+        this.element.remove();
+        this.textElement.remove();
+        this.deleteButton.remove();
+        this.element = null;
+        this.textElement = null;
+        this.deleteButton = null;
+        super.unload();
     }
 }

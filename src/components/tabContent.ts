@@ -2,7 +2,7 @@
 import { MarkdownView, Component } from "obsidian";
 
 export class TabContent extends Component {
-    public containerEl: HTMLElement;
+    public element: HTMLElement;
     public view: MarkdownView;
     public content: string;
     private isActive: boolean = false;
@@ -14,13 +14,13 @@ export class TabContent extends Component {
         super();
         this.content = initialContent;
 
-        this.containerEl = document.createElement("div");
-        this.containerEl.className = "tab-content";
+        this.element = document.createElement("div");
+        this.element.className = "tab-content";
 
         // 创建编辑器容器
         this.editorContainer = document.createElement("div");
         this.editorContainer.className = "tab-editor-container";
-        this.containerEl.appendChild(this.editorContainer);
+        this.element.appendChild(this.editorContainer);
 
         // 创建事件处理器
         this.escapeHandler = this.handleEscape.bind(this);
@@ -55,8 +55,13 @@ export class TabContent extends Component {
                 null
             ) as MarkdownView;
 
+            this.addChild(this.view);
+
             // @ts-ignore - 启用编辑功能
             this.view.editable = true;
+
+            // 添加全局点击监听器
+            this.registerDomEvent(document, "click", this.clickHandler);
 
             this.enterEditMode();
             this.setContent(this.content);
@@ -73,7 +78,7 @@ export class TabContent extends Component {
     }
 
     private setupDoubleClickHandler() {
-        this.containerEl.addEventListener("dblclick", (e) => {
+        this.registerDomEvent(this.element, "dblclick", (e) => {
             if (this.isActive && !this.isEditing()) {
                 this.enterEditMode();
             }
@@ -83,14 +88,7 @@ export class TabContent extends Component {
     private registerEscapeHandler() {
         if (this.view?.editor?.cm) {
             const editorEl = this.view.editor.cm.dom;
-            editorEl.addEventListener("keydown", this.escapeHandler);
-        }
-    }
-
-    private unregisterEscapeHandler() {
-        if (this.view?.editor?.cm) {
-            const editorEl = this.view.editor.cm.dom;
-            editorEl.removeEventListener("keydown", this.escapeHandler);
+            this.registerDomEvent(editorEl, "keydown", this.escapeHandler);
         }
     }
 
@@ -106,6 +104,7 @@ export class TabContent extends Component {
     }
 
     private handleOutsideClick(e: MouseEvent) {
+        if (!this.element.isConnected) document.removeEventListener("click", this.clickHandler);
         if (!this.isActive) return;
         // 检查点击是否发生在编辑器外部
         if (!this.editorContainer.contains(e.target as Node)) {
@@ -114,23 +113,10 @@ export class TabContent extends Component {
     }
 
     public enterEditMode() {
-        if (this.isEditing()) return;
-
         try {
             // @ts-ignore - 显示编辑器
             this.view.showEditor();
-
             this.registerEscapeHandler();
-
-            // 添加全局点击监听器
-            document.addEventListener("click", this.clickHandler);
-
-            // 聚焦编辑器
-            setTimeout(() => {
-                if (this.view.editor) {
-                    this.view.editor.focus();
-                }
-            }, 10);
         } catch (error) {
             console.error("Failed to enter edit mode:", error);
         }
@@ -138,13 +124,8 @@ export class TabContent extends Component {
 
     public exitEditMode(saveContent: boolean = false) {
         try {
-            this.unregisterEscapeHandler();
-
             // @ts-ignore - 显示预览
             this.view.showPreview();
-
-            // 移除全局点击监听器
-            document.removeEventListener("click", this.clickHandler);
 
             // 如果需要保存内容
             if (saveContent) {
@@ -164,9 +145,9 @@ export class TabContent extends Component {
         this.isActive = isActive;
 
         if (isActive) {
-            this.containerEl.addClass("tab-content--active");
+            this.element.addClass("tab-content--active");
         } else {
-            this.containerEl.removeClass("tab-content--active");
+            this.element.removeClass("tab-content--active");
 
             // 如果失去激活状态且正在编辑，则保存并返回预览模式
             if (this.isEditing()) {
@@ -198,21 +179,8 @@ export class TabContent extends Component {
 
     public onContentSave: (content: string) => void = () => {};
 
-    onunload() {
-        // 清理事件监听器
-        this.unregisterEscapeHandler();
-        document.removeEventListener("click", this.clickHandler);
-
-        // 清理视图
-        if (this.view) {
-            try {
-                // @ts-ignore - 卸载视图
-                this.view.unload();
-            } catch (error) {
-                console.error("Failed to unload view:", error);
-            }
-        }
-
-        super.onunload();
+    public onunload() {
+        this.element.remove();
+        this.editorContainer.remove();
     }
 }

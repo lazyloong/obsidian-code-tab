@@ -1,7 +1,3 @@
-.tab-content pre {
-    margin: 0!important;
-}
-
 .tab-container {
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
@@ -14,7 +10,7 @@
     background-color: var(--background-secondary);
     border-bottom: 1px solid var(--background-modifier-border);
     position: relative;
-    overflow-x: scroll;
+    overflow-x: auto;
     overflow-y: hidden;
     padding: 0 !important;
     margin-bottom: 0;
@@ -41,16 +37,17 @@
     padding-right: 28px;
 }
 
+.tab-item.tab-chosen {
+    box-shadow: 0 0 8px rgba(64, 169, 255, 0.5);
+    border: 2px dashed #40a9ff;
+    opacity: 0.9;
+    transform: scale(1.02);
+}
+
 .tab-item--active {
     background-color: var(--background-primary);
     color: var(--text-accent);
     border-bottom-color: #7f6df2 !important;
-}
-
-.tab-item--dragging {
-    opacity: 0.5;
-    transform: rotate(2deg);
-    z-index: 1000;
 }
 
 .tab-text {
@@ -99,12 +96,18 @@
 
 .tab-content {
     display: none;
-    padding: 16px;
     background-color: var(--background-primary);
+    border: none;
+    padding: 16px 0 !important;
 }
 
 .tab-content--active {
     display: block;
+}
+
+.tab-content .markdown-preview-view {
+    padding: 0 !important;
+    overflow: auto;
 }
 
 .tab-add-button {
@@ -147,7 +150,8 @@
 }
 
 @keyframes pulse {
-    0%, 100% {
+    0%,
+    100% {
         opacity: 0.6;
         transform: translateX(-1px) scale(1);
     }
